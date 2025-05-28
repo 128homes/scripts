@@ -1,17 +1,42 @@
 #!/bin/bash
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-WEBHOOK_URL="[webhookurl]"
+DISCORD_WEBHOOK_URL="url"
 
-# Update starten
-apt update
-apt full-upgrade -y
+send_discord_message() {
+    local message=$1
+    # JSON escaping rudimentär (nur Anführungszeichen und Backslash)
+    local json_message=$(echo "$message" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    curl -s -H "Content-Type: application/json" \
+         -X POST \
+         -d "{\"content\":\"${json_message}\"}" \
+         "$DISCORD_WEBHOOK_URL" > /dev/null
+}
 
-# Discord Nachricht schicken
-curl -H "Content-Type: application/json" \
-     -X POST \
-     -d "{\"content\": \"✅ LXC101 wurde erfolgreich aktualisiert. Fahre jetzt runter.\"}" \
-     "$WEBHOOK_URL"
+echo "Prüfe auf Updates..."
 
-# Server runterfahren
-reboot now
+if ! apt update -qq > /dev/null 2>&1; then
+    send_discord_message "❗ Fehler bei apt update auf $(hostname)."
+    exit 1
+fi
+
+UPDATES_AVAILABLE=$(apt list --upgradable 2>/dev/null | grep -v "Listing..." | grep -c .)
+
+if [ "$UPDATES_AVAILABLE" -eq 0 ]; then
+    echo "Keine Updates verfügbar."
+    send_discord_message "🟢 Keine Updates verfügbar. System ist aktuell."
+    exit 0
+fi
+
+echo "Updates verfügbar. Starte full-upgrade..."
+
+if ! apt full-upgrade -y; then
+    send_discord_message "❗ Fehler beim Ausführen von apt full-upgrade."
+    exit 1
+fi
+
+if [ -f /var/run/reboot-required ]; then
+    send_discord_message "🔔 Updates wurden installiert. Neustart erforderlich. Server wird neu gestartet..."
+    reboot
+else
+    send_discord_message "✅ Updates installiert. Kein Neustart erforderlich."
+fi
